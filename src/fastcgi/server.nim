@@ -143,10 +143,20 @@ proc respond*(req: Request, content = "", headers: HttpHeaders = nil, appStatus:
   if content.len > 0:
     payload.add(&"\c\L{content}")
 
-  var header = initHeader(FCGI_STDOUT, req.id, payload.len, 0)
-  await req.client.send(addr header, FCGI_HEADER_LENGTH)
-  if payload.len > 0:
-    await req.client.send(payload.cstring, payload.len)
+  var header = initHeader(FCGI_STDOUT, req.id, -1, 0)
+  var sent = 0
+  var remaining = payload.len
+
+  while remaining > 0:
+    let chunkLen = min(remaining, FCGI_MAX_LENGTH)
+    header.contentLengthB1 = uint8((chunkLen shr 8) and 0xff)
+    header.contentLengthB0 = uint8(chunkLen and 0xff)
+    await req.client.send(addr header, FCGI_HEADER_LENGTH)
+    await req.client.send(addr payload[sent], chunkLen)
+    sent.inc(chunkLen)
+    remaining.dec(chunkLen)
+
+  if sent > 0:
     header.contentLengthB1 = 0
     header.contentLengthB0 = 0
     await req.client.send(addr header, FCGI_HEADER_LENGTH)
